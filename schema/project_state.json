@@ -5,17 +5,22 @@
   "required": [
     "backer_states",
     "creator_wallet",
-    "project_about",
     "project_category",
+    "project_chain",
     "project_collected",
+    "project_createddate",
+    "project_deadline",
+    "project_description",
     "project_done",
-    "project_ecosystem",
     "project_email",
+    "project_icon",
     "project_id",
     "project_name",
     "project_needback",
-    "project_wallet",
-    "project_website"
+    "project_subcategory",
+    "project_teamdescription",
+    "project_website",
+    "project_whitepaper"
   ],
   "properties": {
     "backer_states": {
@@ -27,22 +32,31 @@
     "creator_wallet": {
       "type": "string"
     },
-    "project_about": {
+    "project_category": {
       "type": "string"
     },
-    "project_category": {
+    "project_chain": {
       "type": "string"
     },
     "project_collected": {
       "$ref": "#/definitions/Uint128"
     },
+    "project_createddate": {
+      "type": "string"
+    },
+    "project_deadline": {
+      "type": "string"
+    },
+    "project_description": {
+      "type": "string"
+    },
     "project_done": {
       "$ref": "#/definitions/Uint128"
     },
-    "project_ecosystem": {
+    "project_email": {
       "type": "string"
     },
-    "project_email": {
+    "project_icon": {
       "type": "string"
     },
     "project_id": {
@@ -54,10 +68,16 @@
     "project_needback": {
       "type": "boolean"
     },
-    "project_wallet": {
+    "project_subcategory": {
+      "type": "string"
+    },
+    "project_teamdescription": {
       "type": "string"
     },
     "project_website": {
+      "type": "string"
+    },
+    "project_whitepaper": {
       "type": "string"
     }
   },

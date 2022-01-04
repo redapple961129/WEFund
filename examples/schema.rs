@@ -3,8 +3,8 @@ use std::fs::create_dir_all;
 
 use cosmwasm_schema::{export_schema, remove_schemas, schema_for};
 
-use WEFUND::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
-use WEFUND::state::{Config, ProjectState};
+use wefund15::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
+use wefund15::state::{Config, ProjectState};
 
 fn main() {
     let mut out_dir = current_dir().unwrap();

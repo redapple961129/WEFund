@@ -25,21 +25,25 @@ pub struct BackerState{
 pub struct ProjectState{
     pub project_id: Uint128,
     pub project_name: String,
-    pub project_wallet: String,
-    pub project_collected: Uint128,
-    pub creator_wallet: String,
-    pub project_website: String,
-    pub project_about: String,
-    pub project_email: String,
-    pub project_ecosystem: String,
+    pub project_createddate: String,
+    pub project_description: String,
+    pub project_teamdescription: String,
     pub project_category: String,
-    pub project_needback: bool,
+    pub project_subcategory: String,
+    pub project_chain:String,
+    pub project_collected: Uint128,
+    pub project_deadline: String,
     pub project_done: Uint128, //0:backing 1:done 2:fail
+    pub project_needback: bool,
+    pub project_website: String,
+    pub project_icon: String,
+    pub project_email: String,
+    pub project_whitepaper: String,
+    pub creator_wallet: String,
     pub backer_states:Vec<BackerState>,
 }
 pub const PROJECT_SEQ: Item<Uint128> = Item::new("prj_seq");
 pub const PROJECTSTATES: Map<U128Key, ProjectState> = Map::new("prj");
-
 
 pub fn save_projectstate(deps: DepsMut, _prj: &ProjectState) 
 -> StdResult<()> {

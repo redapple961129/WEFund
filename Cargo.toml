@@ -1,6 +1,6 @@
 [package]
-name = "WEFUND13"
-version = "13.1.0"
+name = "wefund15"
+version = "15.1.2"
 authors = ["Alenzer <alenzer@users.noreply.github.com>"]
 edition = "2018"
 

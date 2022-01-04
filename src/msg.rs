@@ -15,14 +15,27 @@ pub struct InstantiateMsg {
 pub enum ExecuteMsg {
     SetConfig { admin:Option<String>,  wefund: Option<String>, 
         anchor_market: Option<String>, aust_token:Option<String> },
-    AddProject { project_name: String, project_wallet: String, 
-        project_collected: Uint128, creator_wallet: String , 
-        project_website: String, project_about: String,
-        project_email: String, project_ecosystem:String,
-        project_category:String},
+    AddProject { 
+        project_name: String,
+        project_createddate: String,
+        project_description: String,
+        project_teamdescription: String,
+        project_category: String,
+        project_subcategory: String,
+        project_chain:String,
+        project_collected: Uint128,
+        project_deadline: String,
+        project_website: String,
+        project_icon: String,
+        project_email: String,
+        project_whitepaper: String,
+        creator_wallet: String,
+    },
     Back2Project { project_id: Uint128, backer_wallet: String},
     CompleteProject{ project_id:Uint128 },
     FailProject{project_id:Uint128 },
+    RemoveProject{project_id:Uint128 },
+    TransferAllCoins{wallet:String},
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
