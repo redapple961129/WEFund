@@ -1,5 +1,6 @@
 use cosmwasm_std::StdError;
 use thiserror::Error;
+use cosmwasm_std::{Uint128};
 
 #[derive(Error, Debug)]
 pub enum ContractError {
@@ -18,20 +19,42 @@ pub enum ContractError {
     #[error("Need some coin")]
     NeedCoin{},
 
-    #[error("Could not transfer")]
-    COULDNOTTRANSFER{},
-
-    #[error("Contract Address is alreay registered")]
-    AlreadyRegisteredContract{},
-
-    #[error("Not Found Available Project Contract Address")]
-    NOTFOUNDAVAILABLEPROJECTCONTRACT{},
-    
     #[error("Alreay enough collected")]
     AlreadyCollected{},
 
     #[error("Alreay done or failed")]
     AlreadyDoneFail{},
+
+    #[error("Invalid Address")]
+    InvalidAddress{},
+
+    #[error("Already registered community member")]
+    AlreadyRegisteredCommunity{},
+
+    #[error("Not registered community member")]
+    NotRegisteredCommunity{},
+
+    #[error("Not correct status : {status}")]
+    NotCorrectStatus{
+        status: Uint128,
+    },
+
+    #[error("Alreay voted")]
+    AlreadyVoted{},
+
+    #[error("Not voted")]
+    NotVoted{},
+
+    #[error("Not backer wallet")]
+    NotBackerWallet{},
+
+    #[error("Not found Milestone index")]
+    NotFoundMilestoneIndex{},
+
+    #[error("Not correct Milestone status : {status}")]
+    NotCorrectMilestoneStatus{
+        status: Uint128,
+    }
     // Add any other custom errors you like here.
     // Look at https://docs.rs/thiserror/1.0.21/thiserror/ for details.
 }

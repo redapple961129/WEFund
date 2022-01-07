@@ -1,6 +1,7 @@
 use cosmwasm_std::{Uint128};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use crate::state::{Milestone};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct InstantiateMsg {
@@ -30,12 +31,26 @@ pub enum ExecuteMsg {
         project_email: String,
         project_whitepaper: String,
         creator_wallet: String,
+        project_milestones: Vec<Milestone>,
     },
+    RemoveProject{project_id: Uint128 },
+
     Back2Project { project_id: Uint128, backer_wallet: String},
-    CompleteProject{ project_id:Uint128 },
-    FailProject{project_id:Uint128 },
-    RemoveProject{project_id:Uint128 },
-    TransferAllCoins{wallet:String},
+
+    CompleteProject{ project_id: Uint128 },
+    FailProject{project_id: Uint128 },
+
+    TransferAllCoins{wallet: String},
+
+    AddCommunitymember{wallet: String},
+    RemoveCommunitymember{wallet: String},
+
+    AddCommunityVote{project_id: Uint128, wallet: String},
+    RemoveCommunityVote{project_id: Uint128, wallet: String},
+
+    AddMilestoneVote{project_id: Uint128, wallet:String},
+    RemoveMilestoneVote{project_id: Uint128, wallet:String},
+    ReleaseMilestone{project_id:Uint128}
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
@@ -45,6 +60,7 @@ pub enum QueryMsg {
     GetAllProject{},
     GetProject { project_id:Uint128 },
     GetBacker{ project_id:Uint128},
-    GetBalance{ wallet:String }
+    GetBalance{ wallet:String },
+    GetCommunitymembers{},
 }
 

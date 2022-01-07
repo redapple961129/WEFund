@@ -10,9 +10,9 @@ use cw_storage_plus::{U128Key};
 use cw20::{Cw20ExecuteMsg, Cw20QueryMsg, BalanceResponse as Cw20BalanceResponse};
 
 use crate::error::ContractError;
-use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
+use crate::msg::{ExecuteMsg, QueryMsg, InstantiateMsg};
 use crate::state::{Config, CONFIG, PROJECTSTATES, ProjectState, BackerState,
-                    PROJECT_SEQ};
+        PROJECT_SEQ, COMMUNITY, Milestone, Vote, save_projectstate};
 
 use crate::market::{ExecuteMsg as AnchorMarket, Cw20HookMsg};                    
 
@@ -57,6 +57,7 @@ pub fn instantiate(
 
     CONFIG.save(deps.storage, &config)?;
     PROJECT_SEQ.save(deps.storage, &Uint128::new(0))?;
+    COMMUNITY.save(deps.storage, &Vec::new())?;
 
     Ok(Response::new()
         .add_attribute("method", "instantiate"))
@@ -87,6 +88,7 @@ pub fn execute(
             project_email,
             project_whitepaper,
             creator_wallet,
+            project_milestones,
         } => 
             try_addproject(deps, info, 
                 project_name,
@@ -103,6 +105,7 @@ pub fn execute(
                 project_email,
                 project_whitepaper,
                 creator_wallet,
+                project_milestones,
             ),
 
         ExecuteMsg::Back2Project { project_id, backer_wallet } => 
@@ -255,7 +258,7 @@ pub fn try_completeproject(
     let x:ProjectState = PROJECTSTATES.load(deps.storage, _project_id.u128().into())?;
 
     //--------Checking project status-------------------------
-    if x.project_done != Uint128::zero()
+    if x.project_status != Uint128::zero()
     {
         return Err(ContractError::AlreadyDoneFail{});
     }
@@ -275,7 +278,7 @@ pub fn try_completeproject(
     let mut total_real_backed = 0;
     for x in all{
         let prj = x.1;
-        if prj.project_done == Uint128::zero() //exclude done or fail project
+        if prj.project_status == Uint128::zero() //exclude done or fail project
         {
             for y in prj.backer_states{
                 total_real_backed += y.ust_amount.amount.u128();
@@ -314,7 +317,7 @@ pub fn try_completeproject(
     //---------send to creator wallet-------------
     let ust_collected = Coin::new(collected, "uusd");
     let send2_creator = BankMsg::Send { 
-        to_address: x.creator_wallet,
+        to_address: x.creator_wallet.to_string(),
         amount: vec![ust_collected] 
     };
 
@@ -342,7 +345,7 @@ pub fn try_completeproject(
     PROJECTSTATES.update(deps.storage, _project_id.u128().into(), |op| match op {
         None => Err(ContractError::NotRegisteredProject {}),
         Some(mut project) => {
-            project.project_done = Uint128::new(1); //done
+            project.project_status = Uint128::new(1); //done
             Ok(project)
         }
     })?;
@@ -475,6 +478,7 @@ pub fn try_addproject(
     _project_email: String,
     _project_whitepaper: String,
     _creator_wallet: String,
+    _project_milestones: Vec<Milestone>,
 ) -> Result<Response, ContractError> 
 {
     // let res = PROJECTSTATES.may_load(deps.storage, _project_id.u128().into());
@@ -482,16 +486,15 @@ pub fn try_addproject(
     //     return Err(ContractError::AlreadyRegisteredProject {});
     // }
 
-    // increment id if exists, or return 1
-    let id = PROJECT_SEQ.load(deps.storage)?;
-    let id = id.checked_add(Uint128::new(1)).unwrap();
-    PROJECT_SEQ.save(deps.storage, &id)?;
+    let community = COMMUNITY.load(deps.storage).unwrap();
+    let community_votes = Vec::new();
+    for x in community{
+        community_votes.push(
+            Vote{wallet:x, voted: false}
+        );
+    }
 
-    // save project state with id
-   
-    let backer_states = Vec::new();
     let new_project:ProjectState = ProjectState{
-        project_id: id,
         project_name: _project_name,
         project_createddate: _project_createddate,
         project_description: _project_description,
@@ -499,19 +502,30 @@ pub fn try_addproject(
         project_category: _project_category,
         project_subcategory: _project_subcategory,
         project_chain: _project_chain,
-        project_collected: _project_collected,
         project_deadline: _project_deadline,
         project_website: _project_website,
         project_icon: _project_icon,
         project_email: _project_email,
         project_whitepaper: _project_whitepaper,
-        creator_wallet: _creator_wallet,
-        project_needback: true,
-        project_done: Uint128::zero(),
-        backer_states: backer_states,
+
+        project_id: Uint128::zero(), //auto increment
+        creator_wallet: deps.api.addr_validate(&_creator_wallet).unwrap(),
+        project_collected: _project_collected,
+        project_status: Uint128::zero(),
+
+        backerbacked_amount: Uint128::zero(),
+        communitybacked_amount: Uint128::zero(),
+
+        backer_states: Vec::new(),
+        communitybacker_states: Vec::new(),
+
+        milestone_states: _project_milestones,
+        project_milestonestep: Uint128::new(1),
+
+        community_votes: community_votes,
     };
-        
-    PROJECTSTATES.save(deps.storage, id.u128().into(), &new_project)?;
+
+    save_projectstate(deps, &new_project)?;
     Ok(Response::new()
         .add_attribute("action", "add project"))
 }
