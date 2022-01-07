@@ -122,7 +122,92 @@ pub fn execute(
         
         ExecuteMsg::TransferAllCoins{wallet} =>
             try_transferallcoins(deps, _env, info, wallet),
+
+        ExecuteMsg::AddCommunitymember{wallet} =>
+            try_addcommunitymember(deps, info, wallet),
+
+        ExecuteMsg::RemoveCommunitymember{wallet} =>
+            try_removecommunitymember(deps, info, wallet),
+
+        ExecuteMsg::SetCommunityVote{project_id, wallet, voted} =>
+            try_setcommunityvote(deps, project_id, wallet, voted),
+
     }
+}
+
+pub fn try_setcommunityvote(deps: DepsMut, project_id: Uint128, wallet: String, voted: bool)
+    -> Result<Response, ContractError>
+{
+    let mut x:ProjectState = PROJECTSTATES.load(deps.storage, project_id.u128().into())?;
+    
+    //-------check project status-------------------
+    if x.project_status != Uint128::zero() { //only voting status
+        return Err(ContractError::NotCorrectStatus{status:x.project_status});
+    }
+    let wallet = deps.api.addr_validate(&wallet).unwrap();
+    let index = x.community_votes.iter().position(|x|x.wallet == wallet).unwrap();
+
+    x.community_votes[index].voted = voted;
+
+    PROJECTSTATES.update(deps.storage, project_id.u128().into(), |op| match op {
+        None => Err(ContractError::NotRegisteredProject {}),
+        Some(mut project) => {
+            project.community_votes = x.community_votes;
+            Ok(project)
+        }
+    })?;
+
+    Ok(Response::new()
+    .add_attribute("action", "Set community vote")
+    )
+}
+
+pub fn try_removecommunitymember(deps:DepsMut, info:MessageInfo, wallet: String)
+    -> Result<Response, ContractError>
+{
+    let config = CONFIG.load(deps.storage).unwrap();
+    if info.sender != config.owner{
+        return Err(ContractError::Unauthorized{});
+    }
+
+    let wallet = deps.api.addr_validate(&wallet).unwrap();
+
+    let mut community = COMMUNITY.load(deps.storage).unwrap();
+    let res = community.iter().find(|&x| x == &wallet);
+    if res == None {
+        return Err(ContractError::NotRegisteredCommunity{});
+    }
+
+    community.retain(|x|x != &wallet);
+    COMMUNITY.save(deps.storage, &community)?;
+
+    Ok(Response::new()
+    .add_attribute("action", "remove community member")
+    )
+}
+
+pub fn try_addcommunitymember(deps:DepsMut, info:MessageInfo, wallet: String)
+    -> Result<Response, ContractError>
+{
+    let config = CONFIG.load(deps.storage).unwrap();
+    if info.sender != config.owner{
+        return Err(ContractError::Unauthorized{});
+    }
+
+    let wallet = deps.api.addr_validate(&wallet).unwrap();
+
+    let mut community = COMMUNITY.load(deps.storage).unwrap();
+    let res = community.iter().find(|&x| x == &wallet);
+    if res != None {
+        return Err(ContractError::AlreadyRegisteredCommunity{});
+    }
+
+    community.push(wallet);
+    COMMUNITY.save(deps.storage, &community)?;
+
+    Ok(Response::new()
+    .add_attribute("action", "add community member")
+    )
 }
 pub fn try_transferallcoins(deps:DepsMut, _env:Env, info:MessageInfo, wallet:String)
     -> Result<Response, ContractError>
@@ -323,25 +408,6 @@ pub fn try_completeproject(
 
     // remove_project(deps, _project_id);
     //-----update project state to DONE----------------------------
-    // let act = |a: Option<ProjectState>| -> StdResult<ProjectState> { 
-    //     Ok(ProjectState {
-    //         project_id: a.clone().unwrap().project_id,
-    //         project_name: a.clone().unwrap().project_name,
-    //         project_wallet: a.clone().unwrap().project_wallet,
-    //         project_collected: a.clone().unwrap().project_collected,
-    //         project_website: a.clone().unwrap().project_website,
-    //         project_about: a.clone().unwrap().project_about,
-    //         project_email: a.clone().unwrap().project_email,
-    //         project_ecosystem: a.clone().unwrap().project_ecosystem,
-    //         project_category: a.clone().unwrap().project_category,
-    //         creator_wallet: a.clone().unwrap().creator_wallet,
-    //         project_needback: a.clone().unwrap().project_needback,
-    //         project_done: Uint128::new(1), //done
-    //         backer_states: a.clone().unwrap().backer_states,
-    //     })
-    // };
-    // PROJECTSTATES.update(deps.storage, _project_id.u128().into(), act)?;
-    
     PROJECTSTATES.update(deps.storage, _project_id.u128().into(), |op| match op {
         None => Err(ContractError::NotRegisteredProject {}),
         Some(mut project) => {
@@ -374,7 +440,7 @@ pub fn try_failproject(
     let x:ProjectState = PROJECTSTATES.load(deps.storage, _project_id.u128().into())?;
 
     //--------Checking project status-------------------------
-    if x.project_done != Uint128::zero()
+    if x.project_status != Uint128::zero()
     {
         return Err(ContractError::AlreadyDoneFail{});
     }
@@ -395,7 +461,7 @@ pub fn try_failproject(
     let mut total_real_backed = 0;
     for x in all{
         let prj = x.1;
-        if prj.project_done == Uint128::zero() //exclude done or fail project
+        if prj.project_status == Uint128::zero() //exclude done or fail project
         {
             for y in prj.backer_states{
                 total_real_backed += y.ust_amount.amount.u128();
@@ -438,7 +504,7 @@ pub fn try_failproject(
     for backer in x.backer_states{
         let backed_ust = backer.ust_amount;
         let send2_backer = BankMsg::Send { 
-            to_address: backer.backer_wallet,
+            to_address: backer.backer_wallet.to_string(),
             amount: vec![backed_ust] 
         };
         msg.push(CosmosMsg::Bank(send2_backer));
@@ -450,7 +516,7 @@ pub fn try_failproject(
     PROJECTSTATES.update(deps.storage, _project_id.u128().into(), |op| match op {
         None => Err(ContractError::NotRegisteredProject {}),
         Some(mut project) => {
-            project.project_done = Uint128::new(2); //fail
+            project.project_status = Uint128::new(2); //fail
             Ok(project)
         }
     })?;
@@ -487,7 +553,7 @@ pub fn try_addproject(
     // }
 
     let community = COMMUNITY.load(deps.storage).unwrap();
-    let community_votes = Vec::new();
+    let mut community_votes = Vec::new();
     for x in community{
         community_votes.push(
             Vote{wallet:x, voted: false}
@@ -537,16 +603,16 @@ pub fn try_back2project(
     _backer_wallet:String
 ) -> Result<Response, ContractError> 
 {
-    //-------check project exist
+    //-------check project exist-----------------------------------
     let res = PROJECTSTATES.may_load(deps.storage, _project_id.u128().into());
     if res == Ok(None) { //not exist
         return Err(ContractError::NotRegisteredProject {});
     }
-    //--------Get project info----------------------------
+    //--------Get project info------------------------------------
     let mut x = PROJECTSTATES.load(deps.storage, _project_id.u128().into())?;
-    if x.project_needback == false {
-        return Err(ContractError::AlreadyCollected{});
-    }
+    // if x.project_needback == false {
+    //     return Err(ContractError::AlreadyCollected{});
+    // }
 
     //--------check sufficient back--------------------
     let fee:u128 = 100000000;
@@ -573,7 +639,7 @@ pub fn try_back2project(
     fund_real_back.amount = Uint128::new(amount_real_back);
 
     let new_baker:BackerState = BackerState{
-        backer_wallet:_backer_wallet,
+        backer_wallet:deps.api.addr_validate(&_backer_wallet).unwrap(),
         ust_amount: fund_real_back.clone(),
         aust_amount: Coin::new(0, "aust")
     };
@@ -583,7 +649,7 @@ pub fn try_back2project(
     PROJECTSTATES.update(deps.storage, _project_id.u128().into(), |op| match op {
         None => Err(ContractError::NotRegisteredProject {}),
         Some(mut project) => {
-            project.project_needback = needback;
+            // project.project_needback = needback;
             project.backer_states = x.backer_states.clone();
             Ok(project)
         }
@@ -626,9 +692,14 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::GetAllProject{ } => to_binary(&query_allproject(deps)?),
         QueryMsg::GetProject{ project_id } => to_binary(&query_project(deps, project_id)?),
         QueryMsg::GetBacker{ project_id } => to_binary(&query_backer(deps, project_id)?),
+        QueryMsg::GetCommunitymembers{ } => to_binary(&query_communitymembers(deps)?),
     }
 }
 
+fn query_communitymembers(deps:Deps) -> StdResult<Vec<Addr>>{
+    let community = COMMUNITY.load(deps.storage).unwrap();
+    Ok(community)
+}
 fn query_balance(deps:Deps, _env:Env, wallet:String) -> StdResult<AllBalanceResponse>{
 
     // let uusd_denom = String::from("uusd");
@@ -692,12 +763,28 @@ mod tests {
             anchor_market: Some(String::from("market")),
             aust_token: Some(String::from("ETH"))
         };
-
-        let info = mock_info("creator", &[]);
+//instantiate
+        let info = mock_info("admin", &[]);
         let _res = instantiate(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+//add community member
+        let msg = ExecuteMsg::AddCommunitymember{
+            wallet: String::from("community1")
+        };
+        let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+        println!("Add community member{:?}", res);
+        //-------------------------------
+        let msg = ExecuteMsg::AddCommunitymember{
+            wallet: String::from("community2")
+        };
+        let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+        println!("Add community member{:?}", res);
 
+        // let msg = ExecuteMsg::RemoveCommunitymember{
+        //     wallet: String::from("community3")
+        // };
+        // let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+        // println!("Remove community member{:?}", res);
 //add project        
-
        let msg = ExecuteMsg::AddProject{
 	        creator_wallet: String::from("terra1emwyg68n0wtglz8ex2n2728fnfzca9xkdc4aka"),
             project_description: String::from("demo1"),
@@ -712,36 +799,45 @@ mod tests {
             project_deadline: String::from("20220130"),
             project_subcategory: String::from("gaming"),
             project_teamdescription: String::from("demo1"),
-            project_whitepaper: String::from("whitepaper")
+            project_whitepaper: String::from("whitepaper"),
+            project_milestones: Vec::new(),
         };
         let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
         // assert_eq!(res.messages.len(), 0);
-println!("{:?}", res);
+        println!("{:?}", res);
 
 //add project        
 
-let msg = ExecuteMsg::AddProject{
-    creator_wallet: String::from("anyone"),
-    project_description: String::from("demo2"),
-    project_category: String::from("terra"),
-    project_collected: Uint128::new(5000000000),
-    project_chain: String::from("Terra"),
-    project_email: String::from("deme2@gmail.com"),
-    project_name: String::from("demo2"),
-    project_website: String::from("https://demo1"),
-    project_createddate: String::from("20211223"),
-    project_icon: String::from("icon2"),
-    project_deadline: String::from("20220130"),
-    project_subcategory: String::from("gaming"),
-    project_teamdescription: String::from("demo2"),
-    project_whitepaper: String::from("whitepaper")
-};
-let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
-// assert_eq!(res.messages.len(), 0);
-println!("{:?}", res);
+        let msg = ExecuteMsg::AddProject{
+            creator_wallet: String::from("anyone"),
+            project_description: String::from("demo2"),
+            project_category: String::from("terra"),
+            project_collected: Uint128::new(5000000000),
+            project_chain: String::from("Terra"),
+            project_email: String::from("deme2@gmail.com"),
+            project_name: String::from("demo2"),
+            project_website: String::from("https://demo1"),
+            project_createddate: String::from("20211223"),
+            project_icon: String::from("icon2"),
+            project_deadline: String::from("20220130"),
+            project_subcategory: String::from("gaming"),
+            project_teamdescription: String::from("demo2"),
+            project_whitepaper: String::from("whitepaper"),
+            project_milestones: Vec::new(),
+        };
+        let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+        // assert_eq!(res.messages.len(), 0);
+        println!("{:?}", res);
 
-//balance
-
+//Set community vote
+        let info = mock_info("admin", &[]);
+        let msg = ExecuteMsg::SetCommunityVote{
+            project_id: Uint128::new(1),
+            wallet: String::from("community1"),
+            voted: true
+        };
+        let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+        println!("Set Community vote: {:?}", res);
 // back 2 projct
         let info = mock_info("backer1", &[Coin::new(105000000, "uusd")]);
         let msg = ExecuteMsg::Back2Project{

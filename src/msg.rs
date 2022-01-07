@@ -45,12 +45,11 @@ pub enum ExecuteMsg {
     AddCommunitymember{wallet: String},
     RemoveCommunitymember{wallet: String},
 
-    AddCommunityVote{project_id: Uint128, wallet: String},
-    RemoveCommunityVote{project_id: Uint128, wallet: String},
+    SetCommunityVote{project_id: Uint128, wallet: String, voted: bool},
 
-    AddMilestoneVote{project_id: Uint128, wallet:String},
-    RemoveMilestoneVote{project_id: Uint128, wallet:String},
-    ReleaseMilestone{project_id:Uint128}
+    // AddMilestoneVote{project_id: Uint128, wallet:String},
+    // RemoveMilestoneVote{project_id: Uint128, wallet:String},
+    // ReleaseMilestone{project_id:Uint128}
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
