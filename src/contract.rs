@@ -3,7 +3,7 @@ use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     Addr, to_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult,
     Uint128, CosmosMsg, BankMsg, QueryRequest, BankQuery, WasmMsg,
-    Coin, AllBalanceResponse
+    Coin, AllBalanceResponse, Uint256
 };
 use cw2::set_contract_version;
 use cw_storage_plus::{U128Key};
@@ -14,7 +14,8 @@ use crate::msg::{ExecuteMsg, QueryMsg, InstantiateMsg};
 use crate::state::{Config, CONFIG, PROJECTSTATES, ProjectState, BackerState,
         PROJECT_SEQ, COMMUNITY, Milestone, Vote, save_projectstate};
 
-use crate::market::{ExecuteMsg as AnchorMarket, Cw20HookMsg};                    
+use crate::market::{ExecuteMsg as AnchorMarket, Cw20HookMsg,
+    QueryMsg as AnchorQuery, EpochStateResponse};                    
 
 // version info for migration info
 const CONTRACT_NAME: &str = "WEFUND";
@@ -137,54 +138,44 @@ pub fn execute(
             try_setcommunityvote(deps, project_id, wallet, voted),
 
         ExecuteMsg::SetMilestoneVote{project_id, wallet, voted} =>
-            try_setmilestonevote(deps, project_id, wallet, voted),
+            try_setmilestonevote(deps, _env, info, project_id, wallet, voted),
 
         ExecuteMsg::ReleaseMilestone{project_id} =>
-            try_releasemilestone(deps, project_id),
+            try_releasemilestone(deps, _env, project_id),
     }
 }
 pub fn try_releasemilestone(
     deps: DepsMut,
     _env: Env,
-    info: MessageInfo,
     _project_id: Uint128
 ) -> Result<Response, ContractError>
 {
-    //-----------check owner--------------------------
-    let config = CONFIG.load(deps.storage).unwrap();
-    if info.sender != config.owner
-    {
-        return Err(ContractError::Unauthorized{});
-    }
     //--------Get project info----------------------------
     let x:ProjectState = PROJECTSTATES.load(deps.storage, _project_id.u128().into())?;
 
     //--------Checking project status-------------------------
-    if x.project_status != Uint128::zero()
-    {
-        return Err(ContractError::AlreadyDoneFail{});
+    if x.project_status != Uint128::new(3){//only releasing status
+        return Err(ContractError::NotCorrectStatus{status: x.project_status});
     }
 
     //---------calc project collection---------------------------
-    let mut collected = 0;
-    for backer in x.backer_states{
-        collected += backer.ust_amount.amount.u128();
-    }
+    let step = x.project_milestonestep.u128() as usize;
+    let release_amount = 
+        x.milestone_states[step].milestone_amount.u128() * ust;
 
-    //---------calc total real backed money on smart contract----------------
+    //---------calc total deposited to anchor----------------
     //----------map to vec-----------------------
     let all: StdResult<Vec<_>> = PROJECTSTATES.range(deps.storage, None, None, 
         cosmwasm_std::Order::Ascending).collect();
     let all = all.unwrap();
 
-    let mut total_real_backed = 0;
+    let mut total_deposited = 0;
     for x in all{
         let prj = x.1;
-        if prj.project_status == Uint128::zero() //exclude done or fail project
-        {
-            for y in prj.backer_states{
-                total_real_backed += y.ust_amount.amount.u128();
-            }
+        total_deposited += prj.communitybacked_amount.u128() + prj.backerbacked_amount.u128();
+
+        for i in 0..prj.project_milestonestep.u128() as usize{
+            total_deposited -= prj.milestone_states[i].milestone_amount.u128();
         }
     }
   
@@ -199,11 +190,28 @@ pub fn try_releasemilestone(
         }
     )?;
 
-    //----------calc declaim aust amount---aust*(collcted/total)-----------
-    let withdraw_amount = 
-        Uint128::from(aust_balance.balance.u128() 
-        * collected / total_real_backed);
+    //----------calc declaim aust amount---aust*(release/total)-----------
+    // let estimate_withdraw_amount = 
+    //     Uint128::from(aust_balance.balance.u128() * release_amount / total_deposited);
+    let estimate_exchange_rate = total_deposited/aust_balance.balance.u128();
 
+    //--------get exchange rate between ust and aust ---------------------
+    let epoch: EpochStateResponse = deps.querier.query_wasm_smart(
+        config.anchor_market.to_string(),
+        &AnchorQuery::EpochState{
+            block_height: None,
+            distributed_interest: None,
+        }
+    )?;
+
+    let epoch_exchange_rate:Uint256 = epoch.exchange_rate * Uint256::from(ust);
+    
+    if estimate_exchange_rate < epoch_exchange_rate{
+        estimate_exchange_rate = epoch_exchange_rate;
+    }
+
+    let withdraw_amount = release_amount * ust / estimate_exchange_rate;
+    let release_amount = withdraw_amount * epoch_exchange_rate;
 
     //----ask aust_token for transfer to anchor martket and execute redeem_stable ----------
     let withdraw = WasmMsg::Execute {
@@ -211,27 +219,17 @@ pub fn try_releasemilestone(
         msg: to_binary(&Cw20ExecuteMsg::Send {
             contract: config.anchor_market.to_string(),
             msg: to_binary(&Cw20HookMsg::RedeemStable{}).unwrap(), //redeem_stable{}
-            amount: withdraw_amount
+            amount: Uint128::new(withdraw_amount)
         }).unwrap(),
         funds: Vec::new()
     };
 
     //---------send to creator wallet-------------
-    let ust_collected = Coin::new(collected, "uusd");
+    let ust_release = Coin::new(release_amount, "uusd");
     let send2_creator = BankMsg::Send { 
         to_address: x.creator_wallet.to_string(),
-        amount: vec![ust_collected] 
+        amount: vec![ust_release] 
     };
-
-    // remove_project(deps, _project_id);
-    //-----update project state to DONE----------------------------
-    PROJECTSTATES.update(deps.storage, _project_id.u128().into(), |op| match op {
-        None => Err(ContractError::NotRegisteredProject {}),
-        Some(mut project) => {
-            project.project_status = Uint128::new(1); //done
-            Ok(project)
-        }
-    })?;
 
     Ok(Response::new()
     .add_messages(vec![
@@ -240,7 +238,7 @@ pub fn try_releasemilestone(
     .add_attribute("action", "project failed")
     )
 }
-pub fn try_setmilestonevote(deps: DepsMut, project_id: Uint128, wallet: String, voted: bool)
+pub fn try_setmilestonevote(deps: DepsMut, _env:Env, info:MessageInfo, project_id: Uint128, wallet: String, voted: bool)
     -> Result<Response, ContractError>
 {
     let mut x:ProjectState = PROJECTSTATES.load(deps.storage, project_id.u128().into())?;
@@ -268,9 +266,13 @@ pub fn try_setmilestonevote(deps: DepsMut, project_id: Uint128, wallet: String, 
     for vote in x.milestone_states[step].milestone_votes.clone(){
         all_voted = all_voted & vote.voted;
     }
+
+    let mut deps = deps;
     if all_voted{
         x.milestone_states[step].milestone_status = Uint128::new(1); //switch to releasing status
         //-----------------release function---------------
+        let res = execute(deps.branch(), _env, info, 
+                    ExecuteMsg::ReleaseMilestone{project_id});
 
         x.milestone_states[step].milestone_status = Uint128::new(2); //switch to released status
         x.project_milestonestep += Uint128::new(1); //switch to next milestone step
@@ -1011,8 +1013,8 @@ mod tests {
         let msg = InstantiateMsg{
             admin: Some(String::from("admin")),
             wefund: Some(String::from("Wefund")),
-            anchor_market: Some(String::from("market")),
-            aust_token: Some(String::from("ETH"))
+            anchor_market: Some(MOCK_CONTRACT_ADDR.to_string()),
+            aust_token: Some("tokenANC".to_string())
         };
 //instantiate
         let info = mock_info("admin", &[]);
@@ -1157,7 +1159,25 @@ mod tests {
         };
         let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
         println!("back2project:{:?}", res);
+//set milestone vote
+        let info = mock_info("backer1", &[]);
+        let msg = ExecuteMsg::SetMilestoneVote{
+            project_id: Uint128::new(1),
+            wallet: String::from("backer1"),
+            voted: true,
+        };
+        let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+        println!("set milestone vote:{:?}", res);
 
+        let info = mock_info("backer2", &[]);
+        let msg = ExecuteMsg::SetMilestoneVote{
+            project_id: Uint128::new(1),
+            wallet: String::from("backer2"),
+            voted: true,
+        };
+        let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+        println!("set milestone vote:{:?}", res);
+        
 //-Get Project-----------------
         let msg = QueryMsg::GetAllProject{};
         let allproject = query(deps.as_ref(), mock_env(), msg).unwrap();
