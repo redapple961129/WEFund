@@ -51,9 +51,9 @@ pub enum ContractError {
     #[error("Not found Milestone index")]
     NotFoundMilestoneIndex{},
 
-    #[error("Not correct Milestone status : {status}")]
+    #[error("Not correct Milestone status : step{step}:{status}")]
     NotCorrectMilestoneStatus{
-        status: Uint128,
+        step:usize, status: Uint128,
     }
     // Add any other custom errors you like here.
     // Look at https://docs.rs/thiserror/1.0.21/thiserror/ for details.

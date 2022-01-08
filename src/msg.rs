@@ -48,9 +48,9 @@ pub enum ExecuteMsg {
     WeFundApprove{project_id:Uint128},
     SetCommunityVote{project_id: Uint128, wallet: String, voted: bool},
 
-    // AddMilestoneVote{project_id: Uint128, wallet:String},
-    // RemoveMilestoneVote{project_id: Uint128, wallet:String},
-    // ReleaseMilestone{project_id:Uint128}
+    SetMilestoneVote{project_id: Uint128, wallet:String, voted: bool},
+
+    ReleaseMilestone{project_id:Uint128}
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]

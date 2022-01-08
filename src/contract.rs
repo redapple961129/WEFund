@@ -136,7 +136,165 @@ pub fn execute(
         ExecuteMsg::SetCommunityVote{project_id, wallet, voted} =>
             try_setcommunityvote(deps, project_id, wallet, voted),
 
+        ExecuteMsg::SetMilestoneVote{project_id, wallet, voted} =>
+            try_setmilestonevote(deps, project_id, wallet, voted),
+
+        ExecuteMsg::ReleaseMilestone{project_id} =>
+            try_releasemilestone(deps, project_id),
     }
+}
+pub fn try_releasemilestone(
+    deps: DepsMut,
+    _env: Env,
+    info: MessageInfo,
+    _project_id: Uint128
+) -> Result<Response, ContractError>
+{
+    //-----------check owner--------------------------
+    let config = CONFIG.load(deps.storage).unwrap();
+    if info.sender != config.owner
+    {
+        return Err(ContractError::Unauthorized{});
+    }
+    //--------Get project info----------------------------
+    let x:ProjectState = PROJECTSTATES.load(deps.storage, _project_id.u128().into())?;
+
+    //--------Checking project status-------------------------
+    if x.project_status != Uint128::zero()
+    {
+        return Err(ContractError::AlreadyDoneFail{});
+    }
+
+    //---------calc project collection---------------------------
+    let mut collected = 0;
+    for backer in x.backer_states{
+        collected += backer.ust_amount.amount.u128();
+    }
+
+    //---------calc total real backed money on smart contract----------------
+    //----------map to vec-----------------------
+    let all: StdResult<Vec<_>> = PROJECTSTATES.range(deps.storage, None, None, 
+        cosmwasm_std::Order::Ascending).collect();
+    let all = all.unwrap();
+
+    let mut total_real_backed = 0;
+    for x in all{
+        let prj = x.1;
+        if prj.project_status == Uint128::zero() //exclude done or fail project
+        {
+            for y in prj.backer_states{
+                total_real_backed += y.ust_amount.amount.u128();
+            }
+        }
+    }
+  
+    //----------load config and read aust token address-----------------
+    let config = CONFIG.load(deps.storage).unwrap();
+    
+    //--------get aust balance---------------------
+    let aust_balance: Cw20BalanceResponse = deps.querier.query_wasm_smart(
+        config.aust_token.clone(),
+        &Cw20QueryMsg::Balance{
+            address: _env.contract.address.to_string(),
+        }
+    )?;
+
+    //----------calc declaim aust amount---aust*(collcted/total)-----------
+    let withdraw_amount = 
+        Uint128::from(aust_balance.balance.u128() 
+        * collected / total_real_backed);
+
+
+    //----ask aust_token for transfer to anchor martket and execute redeem_stable ----------
+    let withdraw = WasmMsg::Execute {
+        contract_addr: String::from(config.aust_token),
+        msg: to_binary(&Cw20ExecuteMsg::Send {
+            contract: config.anchor_market.to_string(),
+            msg: to_binary(&Cw20HookMsg::RedeemStable{}).unwrap(), //redeem_stable{}
+            amount: withdraw_amount
+        }).unwrap(),
+        funds: Vec::new()
+    };
+
+    //---------send to creator wallet-------------
+    let ust_collected = Coin::new(collected, "uusd");
+    let send2_creator = BankMsg::Send { 
+        to_address: x.creator_wallet.to_string(),
+        amount: vec![ust_collected] 
+    };
+
+    // remove_project(deps, _project_id);
+    //-----update project state to DONE----------------------------
+    PROJECTSTATES.update(deps.storage, _project_id.u128().into(), |op| match op {
+        None => Err(ContractError::NotRegisteredProject {}),
+        Some(mut project) => {
+            project.project_status = Uint128::new(1); //done
+            Ok(project)
+        }
+    })?;
+
+    Ok(Response::new()
+    .add_messages(vec![
+        CosmosMsg::Wasm(withdraw),
+        CosmosMsg::Bank(send2_creator)])
+    .add_attribute("action", "project failed")
+    )
+}
+pub fn try_setmilestonevote(deps: DepsMut, project_id: Uint128, wallet: String, voted: bool)
+    -> Result<Response, ContractError>
+{
+    let mut x:ProjectState = PROJECTSTATES.load(deps.storage, project_id.u128().into())?;
+    
+    //-------check project status-------------------
+    if x.project_status != Uint128::new(3) { //only releasing status
+        return Err(ContractError::NotCorrectStatus{status:x.project_status});
+    }
+
+    let wallet = deps.api.addr_validate(&wallet).unwrap();
+    let step = x.project_milestonestep.u128() as usize;
+
+    if x.milestone_states[step].milestone_status != Uint128::zero(){//only voting status
+        return Err(ContractError::NotCorrectMilestoneStatus{
+            step:step, status:x.milestone_states[step].milestone_status 
+        })
+    }
+
+    //------set vot status--------------------
+    let index = x.milestone_states[step].milestone_votes.iter().position(|x|x.wallet == wallet).unwrap();
+    x.milestone_states[step].milestone_votes[index].voted = voted;
+
+    //------check all voted-----------------
+    let mut all_voted = true;
+    for vote in x.milestone_states[step].milestone_votes.clone(){
+        all_voted = all_voted & vote.voted;
+    }
+    if all_voted{
+        x.milestone_states[step].milestone_status = Uint128::new(1); //switch to releasing status
+        //-----------------release function---------------
+
+        x.milestone_states[step].milestone_status = Uint128::new(2); //switch to released status
+        x.project_milestonestep += Uint128::new(1); //switch to next milestone step
+        
+        //-----------check milestone done---------------------
+        if x.project_milestonestep > Uint128::new(x.milestone_states.len() as u128){
+            x.project_status = Uint128::new(4); //switch to project done status
+        }
+    }
+
+    //-------update-------------------------
+    PROJECTSTATES.update(deps.storage, project_id.u128().into(), |op| match op {
+        None => Err(ContractError::NotRegisteredProject {}),
+        Some(mut project) => {
+            project.milestone_states = x.milestone_states;
+            project.project_milestonestep = x.project_milestonestep;
+            project.project_status = x.project_status;
+            Ok(project)
+        }
+    })?;
+
+    Ok(Response::new()
+    .add_attribute("action", "Set milestone vote")
+    )
 }
 
 pub fn try_setcommunityvote(deps: DepsMut, project_id: Uint128, wallet: String, voted: bool)
@@ -343,8 +501,7 @@ pub fn try_setconfig(deps:DepsMut, info:MessageInfo,
 {
     //-----------check owner--------------------------
     let config = CONFIG.load(deps.storage).unwrap();
-    if info.sender != config.owner
-    {
+    if info.sender != config.owner {
         return Err(ContractError::Unauthorized{});
     }
     
@@ -592,11 +749,6 @@ pub fn try_addproject(
     _project_milestones: Vec<Milestone>,
 ) -> Result<Response, ContractError> 
 {
-    // let res = PROJECTSTATES.may_load(deps.storage, _project_id.u128().into());
-    // if res != Ok(None) {//exist
-    //     return Err(ContractError::AlreadyRegisteredProject {});
-    // }
-
     let community = COMMUNITY.load(deps.storage).unwrap();
     let mut community_votes = Vec::new();
     for x in community{
@@ -622,7 +774,7 @@ pub fn try_addproject(
         project_id: Uint128::zero(), //auto increment
         creator_wallet: deps.api.addr_validate(&_creator_wallet).unwrap(),
         project_collected: _project_collected,
-        project_status: Uint128::zero(),
+        project_status: Uint128::zero(), //wefund voting status
 
         backerbacked_amount: Uint128::zero(),
         communitybacked_amount: Uint128::zero(),
@@ -631,7 +783,7 @@ pub fn try_addproject(
         communitybacker_states: Vec::new(),
 
         milestone_states: _project_milestones,
-        project_milestonestep: Uint128::new(1),
+        project_milestonestep: Uint128::zero(), //first milestonestep
 
         community_votes: community_votes,
     };
@@ -695,6 +847,17 @@ pub fn try_back2project(
         }
         x.backerbacked_amount += fund_real_back.amount;
     }
+    //------push to new backer------------------
+    let new_baker:BackerState = BackerState{
+        backer_wallet: backer_wallet,
+        ust_amount: fund_real_back.clone(),
+        aust_amount: Coin::new(0, "aust")
+    };
+    if is_community != None {//community backer
+        x.communitybacker_states.push(new_baker);
+    } else {
+        x.backer_states.push(new_baker);
+    }
 
     //------check needback-----------------
     let mut communitybacker_needback = true;
@@ -710,17 +873,23 @@ pub fn try_back2project(
     //---------check collection and switch to releasing status---------
     if communitybacker_needback == false && backer_needback == false{
         x.project_status = Uint128::new(3); //releasing
-    }
 
-    let new_baker:BackerState = BackerState{
-        backer_wallet: backer_wallet,
-        ust_amount: fund_real_back.clone(),
-        aust_amount: Coin::new(0, "aust")
-    };
-    if is_community != None {//community backer
-        x.communitybacker_states.push(new_baker);
-    } else {
-        x.backer_states.push(new_baker);
+        //------add milestone votes in every milestone---------------
+        let mut milestone_votes = Vec::new();
+        for backer in x.backer_states.clone(){
+            milestone_votes.push(
+                Vote{ wallet: backer.backer_wallet, voted: false }
+            );
+        }
+        //-----add wefund vote------------------
+        let config = CONFIG.load(deps.storage)?;
+        milestone_votes.push(
+            Vote{ wallet: config.owner, voted: true}
+        );
+
+        for i in 0..x.milestone_states.len(){
+            x.milestone_states[i].milestone_votes = milestone_votes.clone();
+        }
     }
 
     PROJECTSTATES.update(deps.storage, project_id.u128().into(), |op| match op {
@@ -731,6 +900,10 @@ pub fn try_back2project(
             project.backerbacked_amount = x.backerbacked_amount;
             project.backer_states = x.backer_states;
             project.communitybacker_states = x.communitybacker_states;
+            
+            if x.project_status == Uint128::new(3){//only on switching releasing status
+                project.milestone_states = x.milestone_states;
+            }
             Ok(project)
         }
     })?;
@@ -829,6 +1002,8 @@ mod tests {
         MOCK_CONTRACT_ADDR, MockQuerier};
     use cosmwasm_std::{from_binary, Addr, CosmosMsg, WasmMsg,
         BankQuery, BalanceResponse, Coin };
+    use crate::state::{Milestone};
+
     #[test]
     fn workflow(){
         let mut deps = mock_dependencies(&[]);
@@ -861,7 +1036,28 @@ mod tests {
         // let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
         // println!("Remove community member{:?}", res);
 //add project        
-       let msg = ExecuteMsg::AddProject{
+        let milestone1 = Milestone{
+            milestone_step: Uint128::new(0),
+            milestone_name: String::from("milestone1"),
+            milestone_description: String::from("mileston1"),
+            milestone_startdate: String::from("startdate"),
+            milestone_enddate: String::from("enddate"),
+            milestone_amount: Uint128::new(100),
+            milestone_status: Uint128::new(0),
+            milestone_votes: Vec::new()
+        };
+        let milestone2 = Milestone{
+            milestone_step: Uint128::new(1),
+            milestone_name: String::from("milestone2"),
+            milestone_description: String::from("mileston2"),
+            milestone_startdate: String::from("startdate"),
+            milestone_enddate: String::from("enddate"),
+            milestone_amount: Uint128::new(200),
+            milestone_status: Uint128::new(0),
+            milestone_votes: Vec::new()
+        };
+        let milestone_states = vec![milestone1, milestone2];
+        let msg = ExecuteMsg::AddProject{
 	        creator_wallet: String::from("terra1emwyg68n0wtglz8ex2n2728fnfzca9xkdc4aka"),
             project_description: String::from("demo1"),
             project_category: String::from("Charity"),
@@ -876,7 +1072,7 @@ mod tests {
             project_subcategory: String::from("gaming"),
             project_teamdescription: String::from("demo1"),
             project_whitepaper: String::from("whitepaper"),
-            project_milestones: Vec::new(),
+            project_milestones: milestone_states,
         };
         let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
         // assert_eq!(res.messages.len(), 0);
