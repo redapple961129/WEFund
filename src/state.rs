@@ -61,7 +61,9 @@ pub struct ProjectState{
     pub project_id: Uint128,
     pub creator_wallet: Addr,
     pub project_collected: Uint128,
-    pub project_status: Uint128, //0:voting 1:backing 2:releasing 3:done 4:fail
+
+    //0:wefund voting 1:community voting 2:fundrasing 3:releasing 4:done 5:fail
+    pub project_status: Uint128, 
 
     pub backerbacked_amount: Uint128,
     pub communitybacked_amount: Uint128,

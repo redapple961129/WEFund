@@ -19,6 +19,7 @@ use crate::market::{ExecuteMsg as AnchorMarket, Cw20HookMsg};
 // version info for migration info
 const CONTRACT_NAME: &str = "WEFUND";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const ust: u128 = 1000000; //ust unit
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -129,6 +130,9 @@ pub fn execute(
         ExecuteMsg::RemoveCommunitymember{wallet} =>
             try_removecommunitymember(deps, info, wallet),
 
+        ExecuteMsg::WeFundApprove{project_id} =>
+            try_wefundapprove(deps, info, project_id),
+
         ExecuteMsg::SetCommunityVote{project_id, wallet, voted} =>
             try_setcommunityvote(deps, project_id, wallet, voted),
 
@@ -141,17 +145,29 @@ pub fn try_setcommunityvote(deps: DepsMut, project_id: Uint128, wallet: String, 
     let mut x:ProjectState = PROJECTSTATES.load(deps.storage, project_id.u128().into())?;
     
     //-------check project status-------------------
-    if x.project_status != Uint128::zero() { //only voting status
+    if x.project_status != Uint128::new(1) { //only community voting status
         return Err(ContractError::NotCorrectStatus{status:x.project_status});
     }
     let wallet = deps.api.addr_validate(&wallet).unwrap();
     let index = x.community_votes.iter().position(|x|x.wallet == wallet).unwrap();
 
+    //------set vot status--------------------
     x.community_votes[index].voted = voted;
 
+    //------check all voted-----------------
+    let mut all_voted = true;
+    for vote in x.community_votes.clone(){
+        all_voted = all_voted & vote.voted;
+    }
+    if all_voted{
+        x.project_status = Uint128::new(2); //switch to fundrasing status
+    }
+
+    //-------update-------------------------
     PROJECTSTATES.update(deps.storage, project_id.u128().into(), |op| match op {
         None => Err(ContractError::NotRegisteredProject {}),
         Some(mut project) => {
+            project.project_status = x.project_status;
             project.community_votes = x.community_votes;
             Ok(project)
         }
@@ -159,6 +175,36 @@ pub fn try_setcommunityvote(deps: DepsMut, project_id: Uint128, wallet: String, 
 
     Ok(Response::new()
     .add_attribute("action", "Set community vote")
+    )
+}
+
+pub fn try_wefundapprove(deps: DepsMut, info:MessageInfo, project_id: Uint128)
+    ->Result<Response, ContractError>
+{
+    //-----------check owner--------------------------
+    let config = CONFIG.load(deps.storage).unwrap();
+    if info.sender != config.owner{
+        return Err(ContractError::Unauthorized{});
+    }
+
+    let mut x:ProjectState = PROJECTSTATES.load(deps.storage, project_id.u128().into())?;
+    
+    //-------check project status-------------------
+    if x.project_status != Uint128::zero() { //only wefund approve status
+        return Err(ContractError::NotCorrectStatus{status:x.project_status});
+    }
+    x.project_status = Uint128::new(1); //switch to community voting status
+
+    PROJECTSTATES.update(deps.storage, project_id.u128().into(), |op| match op {
+        None => Err(ContractError::NotRegisteredProject {}),
+        Some(mut project) => {
+            project.project_status = x.project_status;
+            Ok(project)
+        }
+    })?;
+
+    Ok(Response::new()
+    .add_attribute("action", "Wefund Approve")
     )
 }
 
@@ -214,8 +260,7 @@ pub fn try_transferallcoins(deps:DepsMut, _env:Env, info:MessageInfo, wallet:Str
 {
     //-----------check owner--------------------------
     let config = CONFIG.load(deps.storage).unwrap();
-    if info.sender != config.owner
-    {
+    if info.sender != config.owner{
         return Err(ContractError::Unauthorized{});
     }
     //--------get all native coins and ust - 4 ----------------------
@@ -599,58 +644,93 @@ pub fn try_addproject(
 pub fn try_back2project(
     deps:DepsMut, 
     info: MessageInfo,
-    _project_id:Uint128, 
-    _backer_wallet:String
+    project_id:Uint128, 
+    backer_wallet:String
 ) -> Result<Response, ContractError> 
 {
     //-------check project exist-----------------------------------
-    let res = PROJECTSTATES.may_load(deps.storage, _project_id.u128().into());
+    let res = PROJECTSTATES.may_load(deps.storage, project_id.u128().into());
     if res == Ok(None) { //not exist
         return Err(ContractError::NotRegisteredProject {});
     }
     //--------Get project info------------------------------------
-    let mut x = PROJECTSTATES.load(deps.storage, _project_id.u128().into())?;
-    // if x.project_needback == false {
-    //     return Err(ContractError::AlreadyCollected{});
-    // }
+    let mut x = PROJECTSTATES.load(deps.storage, project_id.u128().into())?;
+    if x.project_status != Uint128::new(2){//only fundrasing status
+        return Err(ContractError::NotCorrectStatus{status: x.project_status});
+    }
 
     //--------check sufficient back--------------------
-    let fee:u128 = 100000000;
-    if info.funds.is_empty() || info.funds[0].amount.u128() < fee{
+    let fee:u128 = 4 * ust;
+    if info.funds.is_empty() || info.funds[0].amount.u128() < 6 * ust{
         return Err(ContractError::NeedCoin{});
     }
  
     let fund = info.funds[0].clone();
- 
-    //---------check collection---------------------------
-    let mut needback = true;
-    let mut collected = 0;
-    let backer_states = x.backer_states.clone();
+    let mut fund_real_back = fund.clone();
+    let mut fund_wefund = fund.clone();
+    //--------calc amount to desposit and to wefund
+    if fund.amount.u128() >= 100 * ust{
+        fund_real_back.amount = Uint128::new(fund.amount.u128() * 100 / 105);
+        fund_wefund.amount = Uint128::new((fund.amount.u128() * 5 / 105) - fee);
+    } else {
+        fund_real_back.amount = Uint128::new(fund.amount.u128() - 5 * ust);
+        fund_wefund.amount = Uint128::new(1 * ust);
+    }
 
-    for backer in backer_states{
-        collected += backer.ust_amount.amount.u128();
+    let backer_wallet = deps.api.addr_validate(&backer_wallet).unwrap();
+
+    //--------check community and calc backed amount----------------
+    let community = COMMUNITY.load(deps.storage)?;
+    let is_community = community.iter().find(|&x| x == &backer_wallet);
+    let collected = Uint128::new(x.project_collected.u128() / 2 * ust);
+
+    if is_community != None { //community backer
+        if x.communitybacked_amount >= collected{
+            return Err(ContractError::AlreadyCollected{});
+        }
+        x.communitybacked_amount += fund_real_back.amount;
+    } else { //only backer
+        if x.backerbacked_amount >= collected{
+            return Err(ContractError::AlreadyCollected{});
+        }
+        x.backerbacked_amount += fund_real_back.amount;
     }
-    if collected + fund.amount.u128() >= (x.project_collected.u128()*1000000){
-        needback = false;
+
+    //------check needback-----------------
+    let mut communitybacker_needback = true;
+    let mut backer_needback = true;
+
+    if x.communitybacked_amount  >= collected{
+        communitybacker_needback = false;
     }
-    //-------------add new backer to PROJECTSTATE--------------
-    let mut fund_real_back = fund.clone();  
-    let amount_real_back = fund_real_back.amount.u128() * 100 / 105;
-    fund_real_back.amount = Uint128::new(amount_real_back);
+    if x.backerbacked_amount  >= collected{
+        backer_needback = false;
+    }
+
+    //---------check collection and switch to releasing status---------
+    if communitybacker_needback == false && backer_needback == false{
+        x.project_status = Uint128::new(3); //releasing
+    }
 
     let new_baker:BackerState = BackerState{
-        backer_wallet:deps.api.addr_validate(&_backer_wallet).unwrap(),
+        backer_wallet: backer_wallet,
         ust_amount: fund_real_back.clone(),
         aust_amount: Coin::new(0, "aust")
     };
+    if is_community != None {//community backer
+        x.communitybacker_states.push(new_baker);
+    } else {
+        x.backer_states.push(new_baker);
+    }
 
-    x.backer_states.push(new_baker);
-     
-    PROJECTSTATES.update(deps.storage, _project_id.u128().into(), |op| match op {
+    PROJECTSTATES.update(deps.storage, project_id.u128().into(), |op| match op {
         None => Err(ContractError::NotRegisteredProject {}),
         Some(mut project) => {
-            // project.project_needback = needback;
-            project.backer_states = x.backer_states.clone();
+            project.project_status = x.project_status;
+            project.communitybacked_amount = x.communitybacked_amount;
+            project.backerbacked_amount = x.backerbacked_amount;
+            project.backer_states = x.backer_states;
+            project.communitybacker_states = x.communitybacker_states;
             Ok(project)
         }
     })?;
@@ -659,7 +739,6 @@ pub fn try_back2project(
     let config = CONFIG.load(deps.storage).unwrap();
     let anchormarket = config.anchor_market;
 
-    
     //----------deposite to anchor market------------------------
     let deposite_project = WasmMsg::Execute {
             contract_addr: String::from(anchormarket),
@@ -668,9 +747,6 @@ pub fn try_back2project(
     };
 
     //---------send to Wefund with 5/105--------------------
-    let mut fund_wefund = fund.clone();
-    let amount_wefund = (fund_wefund.amount.u128() * 5 / 105) - 4000000;
-    fund_wefund.amount = Uint128::new(amount_wefund);
     let bank_wefund = BankMsg::Send { 
         to_address: config.wefund.to_string(),
         amount: vec![fund_wefund] 
@@ -789,7 +865,7 @@ mod tests {
 	        creator_wallet: String::from("terra1emwyg68n0wtglz8ex2n2728fnfzca9xkdc4aka"),
             project_description: String::from("demo1"),
             project_category: String::from("Charity"),
-            project_collected: Uint128::new(5000000000),
+            project_collected: Uint128::new(300),
             project_chain: String::from("Terra"),
             project_email: String::from("deme1@gmail.com"),
             project_name: String::from("demo1"),
@@ -812,7 +888,7 @@ mod tests {
             creator_wallet: String::from("anyone"),
             project_description: String::from("demo2"),
             project_category: String::from("terra"),
-            project_collected: Uint128::new(5000000000),
+            project_collected: Uint128::new(300),
             project_chain: String::from("Terra"),
             project_email: String::from("deme2@gmail.com"),
             project_name: String::from("demo2"),
@@ -829,11 +905,34 @@ mod tests {
         // assert_eq!(res.messages.len(), 0);
         println!("{:?}", res);
 
-//Set community vote
+//Wefund Approve
         let info = mock_info("admin", &[]);
+        let msg = ExecuteMsg::WeFundApprove{
+            project_id: Uint128::new(1),
+        };
+        let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+        println!("WeFund Approve: {:?}", res);
+
+        let info = mock_info("admin", &[]);
+        let msg = ExecuteMsg::WeFundApprove{
+            project_id: Uint128::new(2),
+        };
+        let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+        println!("WeFund Approve: {:?}", res);
+//Set community vote
+        let info = mock_info("community1", &[]);
         let msg = ExecuteMsg::SetCommunityVote{
             project_id: Uint128::new(1),
             wallet: String::from("community1"),
+            voted: true
+        };
+        let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+        println!("Set Community vote: {:?}", res);
+
+        let info = mock_info("community2", &[]);
+        let msg = ExecuteMsg::SetCommunityVote{
+            project_id: Uint128::new(1),
+            wallet: String::from("community2"),
             voted: true
         };
         let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
@@ -845,15 +944,23 @@ mod tests {
             backer_wallet: String::from("backer1"),
         };
         let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
-println!("back2project:{:?}", res);
-        
+        println!("back2project:{:?}", res);
+
         let info = mock_info("backer2", &[Coin::new(210000000, "uusd")]);
         let msg = ExecuteMsg::Back2Project{
             project_id: Uint128::new(1),
             backer_wallet: String::from("backer2"),
         };
         let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
-println!("back2project:{:?}", res);
+        println!("back2project:{:?}", res);
+
+        let info = mock_info("community1", &[Coin::new(210000000, "uusd")]);
+        let msg = ExecuteMsg::Back2Project{
+            project_id: Uint128::new(1),
+            backer_wallet: String::from("community1"),
+        };
+        let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+        println!("back2project:{:?}", res);
 
 //-Get Project-----------------
         let msg = QueryMsg::GetAllProject{};
