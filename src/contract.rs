@@ -45,14 +45,14 @@ pub fn instantiate(
         .anchor_market
         .and_then(|s| deps.api.addr_validate(s.as_str()).ok()) 
         .unwrap_or(Addr::unchecked(
-            String::from("terra1sepfj7s0aeg5967uxnfk4thzlerrsktkpelm5s")));
-            // terra15dwd5mj8v59wpj0wvt233mf5efdff808c5tkal
+            // String::from("terra1sepfj7s0aeg5967uxnfk4thzlerrsktkpelm5s")));//main net
+            String::from("terra15dwd5mj8v59wpj0wvt233mf5efdff808c5tkal")));//test net
     let aust_token = msg
         .aust_token
         .and_then(|s| deps.api.addr_validate(s.as_str()).ok()) 
         .unwrap_or(Addr::unchecked(
-            String::from("terra1hzh9vpxhsk8253se0vv5jj6etdvxu3nv8z07zu")));
-            // terra1ajt556dpzvjwl0kl5tzku3fc3p3knkg9mkv8jl
+            // String::from("terra1hzh9vpxhsk8253se0vv5jj6etdvxu3nv8z07zu")));//main net
+            String::from("terra1ajt556dpzvjwl0kl5tzku3fc3p3knkg9mkv8jl")));//test net
     let config = Config {
         owner, wefund, anchor_market, aust_token,
     };
@@ -144,6 +144,27 @@ pub fn execute(
             try_releasemilestone(deps, _env, project_id),
     }
 }
+pub fn convert_str_int(str: String)
+    ->u128
+{
+    let bytes = str.into_bytes();
+    let mut res: u128 = 0;
+    let mut dot = false;
+    let mut dotbelow = 0;
+
+    for i in 0..bytes.len(){
+        if bytes[i] < 48{
+            dot = true;
+        }
+        else if dotbelow < 6 {
+            res = res * 10 + (bytes[i] - 48) as u128;
+            if dot {
+                dotbelow += 1;
+            }
+        }
+    }
+    return res;
+}
 pub fn try_releasemilestone(
     deps: DepsMut,
     _env: Env,
@@ -191,9 +212,7 @@ pub fn try_releasemilestone(
     )?;
 
     //----------calc declaim aust amount---aust*(release/total)-----------
-    // let estimate_withdraw_amount = 
-    //     Uint128::from(aust_balance.balance.u128() * release_amount / total_deposited);
-    let estimate_exchange_rate = total_deposited/aust_balance.balance.u128();
+    let mut estimate_exchange_rate = total_deposited/aust_balance.balance.u128();
 
     //--------get exchange rate between ust and aust ---------------------
     let epoch: EpochStateResponse = deps.querier.query_wasm_smart(
@@ -203,8 +222,7 @@ pub fn try_releasemilestone(
             distributed_interest: None,
         }
     )?;
-
-    let epoch_exchange_rate:Uint256 = epoch.exchange_rate * Uint256::from(ust);
+    let epoch_exchange_rate = convert_str_int(epoch.exchange_rate.to_string());
     
     if estimate_exchange_rate < epoch_exchange_rate{
         estimate_exchange_rate = epoch_exchange_rate;
@@ -236,6 +254,8 @@ pub fn try_releasemilestone(
         CosmosMsg::Wasm(withdraw),
         CosmosMsg::Bank(send2_creator)])
     .add_attribute("action", "project failed")
+    .add_attribute("epoch_exchange_rate", epoch.exchange_rate.to_string())
+    .add_attribute("epoch_exchange_rate", epoch_exchange_rate.to_string())
     )
 }
 pub fn try_setmilestonevote(deps: DepsMut, _env:Env, info:MessageInfo, project_id: Uint128, wallet: String, voted: bool)
@@ -271,18 +291,29 @@ pub fn try_setmilestonevote(deps: DepsMut, _env:Env, info:MessageInfo, project_i
     if all_voted{
         x.milestone_states[step].milestone_status = Uint128::new(1); //switch to releasing status
         //-----------------release function---------------
-        let res = execute(deps.branch(), _env, info, 
-                    ExecuteMsg::ReleaseMilestone{project_id});
+        // let res = execute(deps.branch(), _env, info, 
+        //             ExecuteMsg::ReleaseMilestone{project_id}).unwrap();
 
         x.milestone_states[step].milestone_status = Uint128::new(2); //switch to released status
         x.project_milestonestep += Uint128::new(1); //switch to next milestone step
         
         //-----------check milestone done---------------------
-        if x.project_milestonestep > Uint128::new(x.milestone_states.len() as u128){
+        if x.project_milestonestep >= Uint128::new(x.milestone_states.len() as u128){
             x.project_status = Uint128::new(4); //switch to project done status
         }
-    }
 
+        //-------update-------------------------
+        // PROJECTSTATES.update(deps.storage, project_id.u128().into(), |op| match op {
+        //     None => Err(ContractError::NotRegisteredProject {}),
+        //     Some(mut project) => {
+        //         project.milestone_states = x.milestone_states;
+        //         project.project_milestonestep = x.project_milestonestep;
+        //         project.project_status = x.project_status;
+        //         Ok(project)
+        //     }
+        // })?;
+        // return Ok(res)
+    }
     //-------update-------------------------
     PROJECTSTATES.update(deps.storage, project_id.u128().into(), |op| match op {
         None => Err(ContractError::NotRegisteredProject {}),
@@ -1160,6 +1191,24 @@ mod tests {
         let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
         println!("back2project:{:?}", res);
 //set milestone vote
+        let info = mock_info("backer1", &[]);
+        let msg = ExecuteMsg::SetMilestoneVote{
+            project_id: Uint128::new(1),
+            wallet: String::from("backer1"),
+            voted: true,
+        };
+        let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+        println!("set milestone vote:{:?}", res);
+
+        let info = mock_info("backer2", &[]);
+        let msg = ExecuteMsg::SetMilestoneVote{
+            project_id: Uint128::new(1),
+            wallet: String::from("backer2"),
+            voted: true,
+        };
+        let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+        println!("set milestone vote:{:?}", res);
+
         let info = mock_info("backer1", &[]);
         let msg = ExecuteMsg::SetMilestoneVote{
             project_id: Uint128::new(1),
