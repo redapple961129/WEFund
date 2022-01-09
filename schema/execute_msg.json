@@ -266,10 +266,10 @@
     {
       "type": "object",
       "required": [
-        "we_fund_approve"
+        "wefund_approve"
       ],
       "properties": {
-        "we_fund_approve": {
+        "wefund_approve": {
           "type": "object",
           "required": [
             "project_id"
