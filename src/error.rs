@@ -54,6 +54,15 @@ pub enum ContractError {
     #[error("Not correct Milestone status : step{step}:{status}")]
     NotCorrectMilestoneStatus{
         step:usize, status: Uint128,
+    },
+
+    #[error("Not correct Milestone status : {aust_balance} {estimate_exchange_rate} {epoch_exchange_rate} {withdraw_amount} {release_amount}")]
+    Testing{
+        aust_balance: String,
+        estimate_exchange_rate: String,
+        epoch_exchange_rate: String,
+        withdraw_amount: String,
+        release_amount: String
     }
     // Add any other custom errors you like here.
     // Look at https://docs.rs/thiserror/1.0.21/thiserror/ for details.

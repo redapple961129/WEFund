@@ -1,13 +1,13 @@
 use super::*;
 use cosmwasm_std::{from_binary, Addr, CosmosMsg, WasmMsg,
-    BankQuery, BalanceResponse, Coin, Uint128};
-use cosmwasm_std::testing::{mock_env, mock_info, MOCK_CONTRACT_ADDR, mock_dependencies};
+    BankQuery, BalanceResponse, AllBalanceResponse, Coin, Uint128};
+use cosmwasm_std::testing::{mock_env, mock_info, MOCK_CONTRACT_ADDR};
 
 use crate::contract::{execute, instantiate, query};
 use crate::state::{Milestone, Config, ProjectState};
 use crate::msg::{QueryMsg, ExecuteMsg, InstantiateMsg};
 
-// use crate::mock_querier::mock_dependencies;
+use crate::mock_querier::mock_dependencies;
 use cw20::Cw20ExecuteMsg;
 // use terraswap::asset::{Asset, AssetInfo};
 // use terraswap::pair::ExecuteMsg as TerraswapExecuteMsg;
@@ -19,8 +19,8 @@ fn workflow(){
     let msg = InstantiateMsg{
         admin: Some(String::from("admin")),
         wefund: Some(String::from("Wefund")),
-        anchor_market: Some(MOCK_CONTRACT_ADDR.to_string()),
-        aust_token: Some("tokenANC".to_string())
+        anchor_market: Some( "market".to_string()),
+        aust_token: Some("aust".to_string())
     };
 //instantiate
     let info = mock_info("admin", &[]);
@@ -111,14 +111,14 @@ fn workflow(){
 
 //Wefund Approve
     let info = mock_info("admin", &[]);
-    let msg = ExecuteMsg::WeFundApprove{
+    let msg = ExecuteMsg::WefundApprove{
         project_id: Uint128::new(1),
     };
     let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
     println!("WeFund Approve: {:?}", res);
 
     let info = mock_info("admin", &[]);
-    let msg = ExecuteMsg::WeFundApprove{
+    let msg = ExecuteMsg::WefundApprove{
         project_id: Uint128::new(2),
     };
     let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
@@ -165,6 +165,12 @@ fn workflow(){
     };
     let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
     println!("back2project:{:?}", res);
+//-Get Project-----------------
+let msg = QueryMsg::GetAllProject{};
+let allproject = query(deps.as_ref(), mock_env(), msg).unwrap();
+
+let res:Vec<ProjectState> = from_binary(&allproject).unwrap();
+println!("allproject {:?}", res );    
 //set milestone vote
     let info = mock_info("backer1", &[]);
     let msg = ExecuteMsg::SetMilestoneVote{
