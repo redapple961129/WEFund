@@ -179,7 +179,7 @@ pub fn try_releasemilestone(
         return Err(ContractError::NotCorrectStatus{status: x.project_status});
     }
 
-    //---------calc project collection---------------------------
+    //---------get hope to release amount---------------------------
     let step = x.project_milestonestep.u128() as usize;
     let release_amount = 
         x.milestone_states[step].milestone_amount.u128() * ust;
@@ -212,7 +212,7 @@ pub fn try_releasemilestone(
 
     //----------calc declaim aust amount---aust*(release/total)-----------
     let mut estimate_exchange_rate = total_deposited * ust/aust_balance.balance.u128();
-let temp = estimate_exchange_rate.clone();
+
     //--------get exchange rate between ust and aust ---------------------
     let epoch: EpochStateResponse = deps.querier.query_wasm_smart(
         config.anchor_market.to_string(),
@@ -260,9 +260,8 @@ let temp = estimate_exchange_rate.clone();
     .add_messages(vec![
         CosmosMsg::Wasm(withdraw),
         CosmosMsg::Bank(send2_creator)])
-    .add_attribute("action", "project failed")
+    .add_attribute("action", "release milestone")
     .add_attribute("epoch_exchange_rate", epoch.exchange_rate.to_string())
-    .add_attribute("epoch_exchange_rate", temp.to_string())
     )
 }
 pub fn try_setmilestonevote(deps: DepsMut, _env:Env, info:MessageInfo, project_id: Uint128, wallet: String, voted: bool)
@@ -672,47 +671,39 @@ pub fn try_failproject(
     _project_id: Uint128
 ) -> Result<Response, ContractError>
 {
-    //-----------check owner--------------------------
-    let config = CONFIG.load(deps.storage).unwrap();
-    if info.sender != config.owner
-    {
-        return Err(ContractError::Unauthorized{});
-    }
     //--------Get project info----------------------------
     let x:ProjectState = PROJECTSTATES.load(deps.storage, _project_id.u128().into())?;
 
     //--------Checking project status-------------------------
-    if x.project_status != Uint128::zero()
-    {
-        return Err(ContractError::AlreadyDoneFail{});
+    if x.project_status != Uint128::new(3){//only releasing status
+        return Err(ContractError::NotCorrectStatus{status: x.project_status});
     }
 
-    //---------calc project collection---------------------------
-    let mut collected = 0;
-    let backer_states = x.backer_states.clone();
-    for backer in backer_states{
-        collected += backer.ust_amount.amount.u128();
+    //---------calc hope to release amount---------------------------
+    let mut release_amount: u128 = x.communitybacked_amount.u128() + x.backerbacked_amount.u128();
+    
+    for i in 0..(x.project_milestonestep.u128() as usize){
+        release_amount -= x.milestone_states[i].milestone_amount.u128() * ust;
     }
 
-    //---------calc total real backed money on smart contract----------------
+    //---------calc total deposited to anchor----------------
     //----------map to vec-----------------------
     let all: StdResult<Vec<_>> = PROJECTSTATES.range(deps.storage, None, None, 
         cosmwasm_std::Order::Ascending).collect();
     let all = all.unwrap();
 
-    let mut total_real_backed = 0;
+    let mut total_deposited = 0;
     for x in all{
         let prj = x.1;
-        if prj.project_status == Uint128::zero() //exclude done or fail project
-        {
-            for y in prj.backer_states{
-                total_real_backed += y.ust_amount.amount.u128();
-            }
+        total_deposited += prj.communitybacked_amount.u128() + prj.backerbacked_amount.u128();
+
+        for i in 0..(prj.project_milestonestep.u128() as usize){
+            total_deposited -= prj.milestone_states[i].milestone_amount.u128() * ust;
         }
     }
     //----------load config and read aust token address-----------------
     let config = CONFIG.load(deps.storage).unwrap();
-     
+    
     //--------get aust balance---------------------
     let aust_balance: Cw20BalanceResponse = deps.querier.query_wasm_smart(
         config.aust_token.clone(),
@@ -721,11 +712,25 @@ pub fn try_failproject(
         }
     )?;
 
-    //----------calc declaim aust amount---aust*(collcted/total)-----------
-    let withdraw_amount = 
-        Uint128::from(aust_balance.balance.u128() 
-        * collected / total_real_backed);
+    //----------calc declaim aust amount---aust*(release/total)-----------
+    let mut estimate_exchange_rate = total_deposited * ust/aust_balance.balance.u128();
 
+    //--------get exchange rate between ust and aust ---------------------
+    let epoch: EpochStateResponse = deps.querier.query_wasm_smart(
+        config.anchor_market.to_string(),
+        &AnchorQuery::EpochState{
+            block_height: None,
+            distributed_interest: None,
+        }
+    )?;
+    let epoch_exchange_rate = convert_str_int(epoch.exchange_rate.to_string());
+    
+    if estimate_exchange_rate < epoch_exchange_rate{
+        estimate_exchange_rate = epoch_exchange_rate;
+    }
+
+    let withdraw_amount = release_amount * ust / estimate_exchange_rate;
+    let release_amount = withdraw_amount * epoch_exchange_rate / ust;
 
     let mut msg= Vec::new();
 
@@ -735,7 +740,7 @@ pub fn try_failproject(
         msg: to_binary(&Cw20ExecuteMsg::Send {
             contract: config.anchor_market.to_string(),
             msg: to_binary(&Cw20HookMsg::RedeemStable{}).unwrap(), //redeem_stable{}
-            amount: withdraw_amount
+            amount: Uint128::new(withdraw_amount)
         }).unwrap(),
         funds: Vec::new()
     };
@@ -744,7 +749,12 @@ pub fn try_failproject(
 
     //---------send to backer wallet-------------
     for backer in x.backer_states{
-        let backed_ust = backer.ust_amount;
+        let mut backed_ust = backer.ust_amount.clone(); 
+
+        //---while mistone releasing, suddenly failed, distribute with %
+        backed_ust.amount = Uint128::new(backer.ust_amount.amount.u128() * release_amount
+            /(x.communitybacked_amount.u128() + x.backerbacked_amount.u128()));
+
         let send2_backer = BankMsg::Send { 
             to_address: backer.backer_wallet.to_string(),
             amount: vec![backed_ust] 
@@ -752,13 +762,11 @@ pub fn try_failproject(
         msg.push(CosmosMsg::Bank(send2_backer));
     }
     
-    // remove_project(deps, _project_id);
     //-----update project state to FAIL----------------------------
-
     PROJECTSTATES.update(deps.storage, _project_id.u128().into(), |op| match op {
         None => Err(ContractError::NotRegisteredProject {}),
         Some(mut project) => {
-            project.project_status = Uint128::new(2); //fail
+            project.project_status = Uint128::new(5); //fail
             Ok(project)
         }
     })?;
