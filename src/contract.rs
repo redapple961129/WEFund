@@ -20,7 +20,7 @@ use crate::market::{ExecuteMsg as AnchorMarket, Cw20HookMsg,
 // version info for migration info
 const CONTRACT_NAME: &str = "WEFUND";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const ust: u128 = 1000000; //ust unit
+const UST: u128 = 1000000; //ust unit
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -131,8 +131,8 @@ pub fn execute(
         ExecuteMsg::RemoveCommunitymember{wallet} =>
             try_removecommunitymember(deps, info, wallet),
 
-        ExecuteMsg::WefundApprove{project_id} =>
-            try_wefundapprove(deps, info, project_id),
+        ExecuteMsg::WefundApprove{project_id, deadline} =>
+            try_wefundapprove(deps, info, project_id, deadline),
 
         ExecuteMsg::SetCommunityVote{project_id, wallet, voted} =>
             try_setcommunityvote(deps, project_id, wallet, voted),
@@ -142,7 +142,30 @@ pub fn execute(
 
         ExecuteMsg::ReleaseMilestone{project_id} =>
             try_releasemilestone(deps, _env, project_id),
+
+        ExecuteMsg::SetProjectStatus{project_id, status} =>
+            try_setprojectstatus(deps, info, project_id, status),
     }
+}
+pub fn try_setprojectstatus(deps: DepsMut, info: MessageInfo, project_id: Uint128, status: Uint128)
+    ->Result<Response, ContractError>
+{
+    //-----------check owner--------------------------
+    let config = CONFIG.load(deps.storage).unwrap();
+    if info.sender != config.owner {
+        return Err(ContractError::Unauthorized{});
+    }
+//    let x:ProjectState = PROJECTSTATES.load(deps.storage, _project_id.u128().into())?;
+    //-------update-------------------------
+    PROJECTSTATES.update(deps.storage, project_id.u128().into(), |op| match op {
+        None => Err(ContractError::NotRegisteredProject {}),
+        Some(mut project) => {
+            project.project_status = status;
+            Ok(project)
+        }
+    })?;
+    Ok(Response::new()
+    .add_attribute("action", "Set project status"))
 }
 pub fn convert_str_int(str: String)
     ->u128
@@ -165,11 +188,8 @@ pub fn convert_str_int(str: String)
     }
     return res;
 }
-pub fn try_releasemilestone(
-    deps: DepsMut,
-    _env: Env,
-    _project_id: Uint128
-) -> Result<Response, ContractError>
+pub fn try_releasemilestone(deps: DepsMut, _env: Env, _project_id: Uint128 ) 
+    -> Result<Response, ContractError>
 {
     //--------Get project info----------------------------
     let x:ProjectState = PROJECTSTATES.load(deps.storage, _project_id.u128().into())?;
@@ -182,7 +202,7 @@ pub fn try_releasemilestone(
     //---------get hope to release amount---------------------------
     let step = x.project_milestonestep.u128() as usize;
     let release_amount = 
-        x.milestone_states[step].milestone_amount.u128() * ust;
+        x.milestone_states[step].milestone_amount.u128() * UST;
 
     //---------calc total deposited to anchor----------------
     //----------map to vec-----------------------
@@ -196,7 +216,7 @@ pub fn try_releasemilestone(
         total_deposited += prj.communitybacked_amount.u128() + prj.backerbacked_amount.u128();
 
         for i in 0..(prj.project_milestonestep.u128() as usize){
-            total_deposited -= prj.milestone_states[i].milestone_amount.u128() * ust;
+            total_deposited -= prj.milestone_states[i].milestone_amount.u128() * UST;
         }
     }
     //----------load config and read aust token address-----------------
@@ -211,7 +231,7 @@ pub fn try_releasemilestone(
     )?;
 
     //----------calc declaim aust amount---aust*(release/total)-----------
-    let mut estimate_exchange_rate = total_deposited * ust/aust_balance.balance.u128();
+    let mut estimate_exchange_rate = total_deposited * UST/aust_balance.balance.u128();
 
     //--------get exchange rate between ust and aust ---------------------
     let epoch: EpochStateResponse = deps.querier.query_wasm_smart(
@@ -227,8 +247,8 @@ pub fn try_releasemilestone(
         estimate_exchange_rate = epoch_exchange_rate;
     }
 
-    let withdraw_amount = release_amount * ust / estimate_exchange_rate;
-    let release_amount = withdraw_amount * epoch_exchange_rate / ust;
+    let withdraw_amount = release_amount * UST / estimate_exchange_rate;
+    let release_amount = withdraw_amount * epoch_exchange_rate / UST;
 
     //----ask aust_token for transfer to anchor martket and execute redeem_stable ----------
     let withdraw = WasmMsg::Execute {
@@ -352,11 +372,13 @@ pub fn try_setcommunityvote(deps: DepsMut, project_id: Uint128, wallet: String, 
     x.community_votes[index].voted = voted;
 
     //------check all voted-----------------
-    let mut all_voted = true;
+    let mut voted_count: u128 = 0;
     for vote in x.community_votes.clone(){
-        all_voted = all_voted & vote.voted;
+        if vote.voted{
+            voted_count += 1;
+        }
     }
-    if all_voted{
+    if voted_count >= (x.community_votes.len()/2) as u128 {
         x.project_status = Uint128::new(2); //switch to fundrasing status
     }
 
@@ -375,7 +397,7 @@ pub fn try_setcommunityvote(deps: DepsMut, project_id: Uint128, wallet: String, 
     )
 }
 
-pub fn try_wefundapprove(deps: DepsMut, info:MessageInfo, project_id: Uint128)
+pub fn try_wefundapprove(deps: DepsMut, info:MessageInfo, project_id: Uint128, deadline:Uint128)
     ->Result<Response, ContractError>
 {
     //-----------check owner--------------------------
@@ -396,6 +418,7 @@ pub fn try_wefundapprove(deps: DepsMut, info:MessageInfo, project_id: Uint128)
         None => Err(ContractError::NotRegisteredProject {}),
         Some(mut project) => {
             project.project_status = x.project_status;
+            project.community_vote_deadline = deadline;
             Ok(project)
         }
     })?;
@@ -586,7 +609,7 @@ pub fn try_completeproject(
     let mut release_amount: u128 = x.communitybacked_amount.u128() + x.backerbacked_amount.u128();
     
     for i in 0..(x.project_milestonestep.u128() as usize){
-        release_amount -= x.milestone_states[i].milestone_amount.u128() * ust;
+        release_amount -= x.milestone_states[i].milestone_amount.u128() * UST;
     }
 
     //---------calc total deposited to anchor----------------
@@ -601,7 +624,7 @@ pub fn try_completeproject(
         total_deposited += prj.communitybacked_amount.u128() + prj.backerbacked_amount.u128();
 
         for i in 0..(prj.project_milestonestep.u128() as usize){
-            total_deposited -= prj.milestone_states[i].milestone_amount.u128() * ust;
+            total_deposited -= prj.milestone_states[i].milestone_amount.u128() * UST;
         }
     }
     //----------load config and read aust token address-----------------
@@ -616,7 +639,7 @@ pub fn try_completeproject(
     )?;
 
     //----------calc declaim aust amount---aust*(release/total)-----------
-    let mut estimate_exchange_rate = total_deposited * ust/aust_balance.balance.u128();
+    let mut estimate_exchange_rate = total_deposited * UST/aust_balance.balance.u128();
 
     //--------get exchange rate between ust and aust ---------------------
     let epoch: EpochStateResponse = deps.querier.query_wasm_smart(
@@ -632,8 +655,8 @@ pub fn try_completeproject(
         estimate_exchange_rate = epoch_exchange_rate;
     }
 
-    let withdraw_amount = release_amount * ust / estimate_exchange_rate;
-    let release_amount = withdraw_amount * epoch_exchange_rate / ust;
+    let withdraw_amount = release_amount * UST / estimate_exchange_rate;
+    let release_amount = withdraw_amount * epoch_exchange_rate / UST;
 
     //----ask aust_token for transfer to anchor martket and execute redeem_stable ----------
     let withdraw = WasmMsg::Execute {
@@ -680,7 +703,7 @@ pub fn try_failproject(
     let mut release_amount: u128 = x.communitybacked_amount.u128() + x.backerbacked_amount.u128();
     
     for i in 0..(x.project_milestonestep.u128() as usize){
-        release_amount -= x.milestone_states[i].milestone_amount.u128() * ust;
+        release_amount -= x.milestone_states[i].milestone_amount.u128() * UST;
     }
 
     //---------calc total deposited to anchor----------------
@@ -695,7 +718,7 @@ pub fn try_failproject(
         total_deposited += prj.communitybacked_amount.u128() + prj.backerbacked_amount.u128();
 
         for i in 0..(prj.project_milestonestep.u128() as usize){
-            total_deposited -= prj.milestone_states[i].milestone_amount.u128() * ust;
+            total_deposited -= prj.milestone_states[i].milestone_amount.u128() * UST;
         }
     }
     //----------load config and read aust token address-----------------
@@ -710,7 +733,7 @@ pub fn try_failproject(
     )?;
 
     //----------calc declaim aust amount---aust*(release/total)-----------
-    let mut estimate_exchange_rate = total_deposited * ust/aust_balance.balance.u128();
+    let mut estimate_exchange_rate = total_deposited * UST/aust_balance.balance.u128();
 
     //--------get exchange rate between ust and aust ---------------------
     let epoch: EpochStateResponse = deps.querier.query_wasm_smart(
@@ -726,8 +749,8 @@ pub fn try_failproject(
         estimate_exchange_rate = epoch_exchange_rate;
     }
 
-    let withdraw_amount = release_amount * ust / estimate_exchange_rate;
-    let release_amount = withdraw_amount * epoch_exchange_rate / ust;
+    let withdraw_amount = release_amount * UST / estimate_exchange_rate;
+    let release_amount = withdraw_amount * epoch_exchange_rate / UST;
 
     let mut msg= Vec::new();
 
@@ -831,6 +854,7 @@ pub fn try_addproject(
         project_milestonestep: Uint128::zero(), //first milestonestep
 
         community_votes: community_votes,
+        community_vote_deadline: Uint128::zero(),
     };
 
     save_projectstate(deps, &new_project)?;
@@ -857,8 +881,8 @@ pub fn try_back2project(
     }
 
     //--------check sufficient back--------------------
-    let fee:u128 = 4 * ust;
-    if info.funds.is_empty() || info.funds[0].amount.u128() < 6 * ust{
+    let fee:u128 = 4 * UST;
+    if info.funds.is_empty() || info.funds[0].amount.u128() < 6 * UST{
         return Err(ContractError::NeedCoin{});
     }
  
@@ -866,12 +890,12 @@ pub fn try_back2project(
     let mut fund_real_back = fund.clone();
     let mut fund_wefund = fund.clone();
     //--------calc amount to desposit and to wefund
-    if fund.amount.u128() >= 100 * ust{
+    if fund.amount.u128() >= 100 * UST{
         fund_real_back.amount = Uint128::new(fund.amount.u128() * 100 / 105);
         fund_wefund.amount = Uint128::new((fund.amount.u128() * 5 / 105) - fee);
     } else {
-        fund_real_back.amount = Uint128::new(fund.amount.u128() - 5 * ust);
-        fund_wefund.amount = Uint128::new(1 * ust);
+        fund_real_back.amount = Uint128::new(fund.amount.u128() - 5 * UST);
+        fund_wefund.amount = Uint128::new(1 * UST);
     }
 
     let backer_wallet = deps.api.addr_validate(&backer_wallet).unwrap();
@@ -879,7 +903,7 @@ pub fn try_back2project(
     //--------check community and calc backed amount----------------
     let community = COMMUNITY.load(deps.storage)?;
     let is_community = community.iter().find(|&x| x == &backer_wallet);
-    let collected = Uint128::new(x.project_collected.u128() / 2 * ust);
+    let collected = Uint128::new(x.project_collected.u128() / 2 * UST);
 
     if is_community != None { //community backer
         if x.communitybacked_amount >= collected{

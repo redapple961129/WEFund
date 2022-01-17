@@ -78,6 +78,7 @@ pub struct ProjectState{
     pub project_milestonestep: Uint128, 
 //---------community votes--------------------------------------------
     pub community_votes: Vec<Vote>,
+    pub community_vote_deadline: Uint128,
 }
 pub const PROJECT_SEQ: Item<Uint128> = Item::new("prj_seq");
 pub const PROJECTSTATES: Map<U128Key, ProjectState> = Map::new("prj");
