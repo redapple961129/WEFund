@@ -303,13 +303,15 @@ pub fn try_setmilestonevote(deps: DepsMut, _env:Env, info:MessageInfo, project_i
         })
     }
 
-    //------set vot status--------------------
-    let index = x.milestone_states[step].milestone_votes.iter().position(|x|x.wallet == wallet).unwrap();
-    x.milestone_states[step].milestone_votes[index].voted = voted;
+    //------set vot status and check all voted for same backer--------------------
+    // let index = x.milestone_states[step].milestone_votes.iter().position(|x|x.wallet == wallet).unwrap();
+    // x.milestone_states[step].milestone_votes[index].voted = voted;
 
-    //------check all voted-----------------
     let mut all_voted = true;
-    for vote in x.milestone_states[step].milestone_votes.clone(){
+    for vote in x.milestone_states[step].milestone_votes.iter_mut() {
+        if vote.wallet == wallet{
+            vote.voted = voted;
+        }
         all_voted = all_voted & vote.voted;
     }
 
