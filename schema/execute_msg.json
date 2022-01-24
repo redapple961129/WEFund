@@ -272,9 +272,13 @@
         "wefund_approve": {
           "type": "object",
           "required": [
+            "deadline",
             "project_id"
           ],
           "properties": {
+            "deadline": {
+              "$ref": "#/definitions/Uint128"
+            },
             "project_id": {
               "$ref": "#/definitions/Uint128"
             }
@@ -352,6 +356,30 @@
           ],
           "properties": {
             "project_id": {
+              "$ref": "#/definitions/Uint128"
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "set_project_status"
+      ],
+      "properties": {
+        "set_project_status": {
+          "type": "object",
+          "required": [
+            "project_id",
+            "status"
+          ],
+          "properties": {
+            "project_id": {
+              "$ref": "#/definitions/Uint128"
+            },
+            "status": {
               "$ref": "#/definitions/Uint128"
             }
           }

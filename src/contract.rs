@@ -45,14 +45,14 @@ pub fn instantiate(
         .anchor_market
         .and_then(|s| deps.api.addr_validate(s.as_str()).ok()) 
         .unwrap_or(Addr::unchecked(
-            // String::from("terra1sepfj7s0aeg5967uxnfk4thzlerrsktkpelm5s")));//main net
-            String::from("terra15dwd5mj8v59wpj0wvt233mf5efdff808c5tkal")));//test net
+            String::from("terra1sepfj7s0aeg5967uxnfk4thzlerrsktkpelm5s")));//main net
+            // String::from("terra15dwd5mj8v59wpj0wvt233mf5efdff808c5tkal")));//test net
     let aust_token = msg
         .aust_token
         .and_then(|s| deps.api.addr_validate(s.as_str()).ok()) 
         .unwrap_or(Addr::unchecked(
-            // String::from("terra1hzh9vpxhsk8253se0vv5jj6etdvxu3nv8z07zu")));//main net
-            String::from("terra1ajt556dpzvjwl0kl5tzku3fc3p3knkg9mkv8jl")));//test net
+            String::from("terra1hzh9vpxhsk8253se0vv5jj6etdvxu3nv8z07zu")));//main net
+            // String::from("terra1ajt556dpzvjwl0kl5tzku3fc3p3knkg9mkv8jl")));//test net
     let config = Config {
         owner, wefund, anchor_market, aust_token,
     };
