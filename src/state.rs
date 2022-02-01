@@ -20,6 +20,8 @@ pub struct BackerState{
     pub backer_wallet: Addr,
     pub ust_amount: Coin,
     pub aust_amount: Coin,
+    pub otherchain: String,
+    pub otherchain_wallet: String,
 }
 //--------------Vote---------------------------------------
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]

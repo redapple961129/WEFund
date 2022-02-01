@@ -110,14 +110,14 @@ pub fn execute(
                 project_milestones,
             ),
 
-        ExecuteMsg::Back2Project { project_id, backer_wallet } => 
-            try_back2project(deps, info, project_id, backer_wallet),
+        ExecuteMsg::Back2Project { project_id, backer_wallet , otherchain, otherchain_wallet} => 
+            try_back2project(deps, info, project_id, backer_wallet, otherchain, otherchain_wallet),
 
         ExecuteMsg::CompleteProject{ project_id } =>
-            try_completeproject(deps, _env, info, project_id ),
+            try_completeproject(deps, _env, project_id ),
 
         ExecuteMsg::FailProject{ project_id } =>
-            try_failproject(deps, _env, info, project_id),
+            try_failproject(deps, _env, project_id),
         
         ExecuteMsg::RemoveProject{ project_id } =>
             try_removeproject(deps, info, project_id),
@@ -126,10 +126,10 @@ pub fn execute(
             try_transferallcoins(deps, _env, info, wallet),
 
         ExecuteMsg::AddCommunitymember{wallet} =>
-            try_addcommunitymember(deps, info, wallet),
+            try_addcommunitymember(deps, wallet),
 
         ExecuteMsg::RemoveCommunitymember{wallet} =>
-            try_removecommunitymember(deps, info, wallet),
+            try_removecommunitymember(deps, wallet),
 
         ExecuteMsg::WefundApprove{project_id, deadline} =>
             try_wefundapprove(deps, info, project_id, deadline),
@@ -430,14 +430,9 @@ pub fn try_wefundapprove(deps: DepsMut, info:MessageInfo, project_id: Uint128, d
     )
 }
 
-pub fn try_removecommunitymember(deps:DepsMut, info:MessageInfo, wallet: String)
+pub fn try_removecommunitymember(deps:DepsMut, wallet: String)
     -> Result<Response, ContractError>
 {
-    let config = CONFIG.load(deps.storage).unwrap();
-    if info.sender != config.owner{
-        return Err(ContractError::Unauthorized{});
-    }
-
     let wallet = deps.api.addr_validate(&wallet).unwrap();
 
     let mut community = COMMUNITY.load(deps.storage).unwrap();
@@ -454,14 +449,9 @@ pub fn try_removecommunitymember(deps:DepsMut, info:MessageInfo, wallet: String)
     )
 }
 
-pub fn try_addcommunitymember(deps:DepsMut, info:MessageInfo, wallet: String)
+pub fn try_addcommunitymember(deps:DepsMut, wallet: String)
     -> Result<Response, ContractError>
 {
-    let config = CONFIG.load(deps.storage).unwrap();
-    if info.sender != config.owner{
-        return Err(ContractError::Unauthorized{});
-    }
-
     let wallet = deps.api.addr_validate(&wallet).unwrap();
 
     let mut community = COMMUNITY.load(deps.storage).unwrap();
@@ -595,7 +585,6 @@ pub fn try_setconfig(deps:DepsMut, info:MessageInfo,
 pub fn try_completeproject(
     deps: DepsMut,
     _env: Env,
-    info: MessageInfo,
     _project_id: Uint128
 ) -> Result<Response, ContractError>
 {
@@ -689,7 +678,6 @@ pub fn try_completeproject(
 pub fn try_failproject(
     deps: DepsMut,
     _env: Env,
-    info: MessageInfo,
     _project_id: Uint128
 ) -> Result<Response, ContractError>
 {
@@ -865,10 +853,12 @@ pub fn try_addproject(
 }
 
 pub fn try_back2project(
-    deps:DepsMut, 
+    deps: DepsMut, 
     info: MessageInfo,
-    project_id:Uint128, 
-    backer_wallet:String
+    project_id: Uint128, 
+    backer_wallet: String,
+    otherchain: String,
+    otherchain_wallet: String,
 ) -> Result<Response, ContractError> 
 {
     //-------check project exist-----------------------------------
@@ -921,6 +911,8 @@ pub fn try_back2project(
     //------push to new backer------------------
     let new_baker:BackerState = BackerState{
         backer_wallet: backer_wallet,
+        otherchain: otherchain,
+        otherchain_wallet: otherchain_wallet,
         ust_amount: fund_real_back.clone(),
         aust_amount: Coin::new(0, "aust")
     };

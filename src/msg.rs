@@ -35,7 +35,8 @@ pub enum ExecuteMsg {
     },
     RemoveProject{project_id: Uint128 },
 
-    Back2Project { project_id: Uint128, backer_wallet: String},
+    Back2Project { project_id: Uint128, backer_wallet: String, 
+        otherchain:String, otherchain_wallet:String},
 
     CompleteProject{ project_id: Uint128 },
     FailProject{project_id: Uint128 },
